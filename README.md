@@ -1,0 +1,2 @@
+# infinityscript
+A scripting language 
