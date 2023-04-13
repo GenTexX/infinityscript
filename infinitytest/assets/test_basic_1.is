@@ -1,0 +1,4 @@
+let a : int = 20;
+let b : int = 30;
+
+print(a + b);
