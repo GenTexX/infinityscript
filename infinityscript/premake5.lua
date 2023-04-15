@@ -10,7 +10,6 @@ project "infinityscript"
 	pchheader "infscrpch.h"
 	pchsource "src/infscrpch.cpp"
 	
-
 includeDir = {}
 libDir = {}
 
@@ -21,11 +20,31 @@ libDir = {}
 	}
 	
     includedirs {
-        "src"
+        "src",
+		"../vendor/spdlog/include"
 	}
 	
 	defines {
+		
 	}
+
+	links{
+        "spdlog"
+	}
+
+	filter "architecture:x32"
+			defines "INFINITY_X32"
+		
+		filter "architecture:x64"
+			defines "INFINITY_X64"
+		
+		filter "architecture:ARM"
+			defines "INFINITY_ARM"
+		
+		filter "architecture:ARM64"
+			defines "INFINITY_ARM64"
+	
+	filter ""
 	
 	filter "system:windows"
 		systemversion "latest"
@@ -35,15 +54,11 @@ libDir = {}
 			"_CRT_SECURE_NO_WARNINGS"
 		}
 		
+
 	filter "configurations:debug"
 		defines "INFINITY_DEBUG"
 		runtime "debug"
 		symbols "on"
-
-    filter "configurations:pre"
-    	defines "INFINITY_PRE_RELEASE"
-	    runtime "release"
-		optimize "on"
 
 	filter "configurations:release"
 			defines "INFINITY_RELEASE"

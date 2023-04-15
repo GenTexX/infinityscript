@@ -1,11 +1,10 @@
-workspace "tulip"
+workspace "infinityscript"
 	architecture "x64"
-	startproject "tulipeditor"
+	startproject "infinitytest"
 	
 	configurations
 	{
 		"debug",
-		"pre",
 		"release"
 	}
 
@@ -14,13 +13,16 @@ workspace "tulip"
 		"MultiProcessorCompile"
 	}
 	
-outputDir = "%{cfg.buildcfg}-%{cfg.architecture}"
+outputDir = "%{cfg.architecture}-%{cfg.buildcfg}"
 
 group "core"
-include "infinityscript"
+	include "infinityscript"
 group ""
 group "test"
-include "infinitytest"
+	include "infinitytest"
+group ""
+group "dependencies"
+	include "vendor/spdlog"
 group ""
 
 

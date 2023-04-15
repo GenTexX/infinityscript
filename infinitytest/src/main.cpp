@@ -1,13 +1,20 @@
 #include <iostream>
 
 #include <lexer\lexer.h>
+#include <logger\logger.h>
 
 
 int main() {
 
-	infinity::Lexer lexer("assets/test_basic_1.is");
+	infinity::Logger::init();
+	infinity::Lexer lexer("assets/test_basic_3.is");
 
-	std::cout << lexer.hello() << std::endl;
+	auto tokens = lexer.analyse();
+
+	size_t idx = 0;
+	while (tokens != nullptr && tokens[idx].getType() != infinity::End) {
+		std::cout << tokens[idx++].toString();
+	}
 
 	return 0;
 }

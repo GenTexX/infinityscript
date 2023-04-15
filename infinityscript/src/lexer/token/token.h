@@ -1,6 +1,6 @@
 #pragma once
-
 #include "tokentype.h"
+#include "lexer\lexerError.h"
 
 namespace infinity {
 
@@ -15,7 +15,9 @@ namespace infinity {
 		void setType(const TokenType& type);
 		TokenType getType() { return m_type; }
 
-		static Token* tokenize(const char* src);
+		static std::pair<LexerError*, Token*> tokenize(const char* src, bool skipNewLine = false);
+
+		std::string toString();
 
 	private:
 		char* m_val;

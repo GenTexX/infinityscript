@@ -1,4 +1,5 @@
-let a : int = 20;
-let b : int = 30;
-
-print(a + b);
+let myChar1 : char = 'n';
+let myChar2 : char = '"';
+let myChar3 : char = ''';
+let myChar4 : char = '\n';
+let myChar5 : char = '\\';

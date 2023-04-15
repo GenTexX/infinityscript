@@ -16,7 +16,8 @@ project "infinitytest"
 
 	includedirs {
 		"../infinityscript/src",
-        "src"
+        "src",
+		"../vendor/spdlog/include"
 	}
 
 	libdirs	{
@@ -45,22 +46,8 @@ project "infinitytest"
 		defines "INFINITY_DEBUG"
 		runtime "Debug"
 		symbols "on"
-        
-        postbuildcommands {
-		}
-
-    filter "configurations:pre"
-    	defines "INFINITY_PRE_RELEASE"
-	    runtime "release"
-		optimize "on"
-        postbuildcommands {
-			'{COPY} "../vendor/mono/bin/release/mono-2.0-sgen.dll" "%{cfg.targetdir}"'
-		}
 
 	filter "configurations:release"
 			defines "INFINITY_RELEASE"
 			runtime "release"
 			optimize "on"
-            postbuildcommands {
-			    '{COPY} "../vendor/mono/bin/release/mono-2.0-sgen.dll" "%{cfg.targetdir}"'
-		    }
