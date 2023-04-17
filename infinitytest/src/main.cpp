@@ -16,5 +16,7 @@ int main() {
 		std::cout << tokens[idx++].toString();
 	}
 
+	delete[] tokens;
+
 	return 0;
 }
