@@ -12,9 +12,9 @@ int main() {
 	auto tokens = lexer.analyse();
 
 	size_t idx = 0;
-	while (tokens != nullptr && tokens[idx].getType() != infinity::End) {
-		std::cout << tokens[idx++].toString();
-	}
+	//while (tokens != nullptr && tokens[idx].getType() != infinity::End) {
+	//	std::cout << tokens[idx++].toString();
+	//}
 
 	delete[] tokens;
 

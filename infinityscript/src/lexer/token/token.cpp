@@ -7,10 +7,147 @@
 #include <format>
 
 #define MAX_LEXER_ERROR_BEFORE_BREAK 31
-#define POST_TOKENIZE_LOG_TEMPLATE_SUCCESS "Tokenized \033[1;34m{}\033[0m characters into \033[1;35m{}\033[0m tokens in \033[1;32m{}\033[0m microseconds with \033[1;32m{}\033[0m error(s)"
-#define POST_TOKENIZE_LOG_TEMPLATE_ERROR "Tokenized \033[1;34m{}\033[0m characters into \033[1;35m{}\033[0m tokens in \033[1;32m{}\033[0m microseconds with \033[1;31m{}\033[0m error(s)"
+#define POST_TOKENIZE_LOG_TEMPLATE_SUCCESS "Tokenized \033[1;34m{}\033[0m characters into \033[1;35m{}\033[0m tokens in \033[1;33m{}\033[0m microseconds with \033[1;32m{}\033[0m error(s)"
+#define POST_TOKENIZE_LOG_TEMPLATE_ERROR "Tokenized \033[1;34m{}\033[0m characters into \033[1;35m{}\033[0m tokens in \033[1;33m{}\033[0m microseconds with \033[1;31m{}\033[0m error(s)"
 
 namespace infinity {
+
+
+	struct TokenInfo {
+
+		//Sourcecode
+		const char* src;
+		size_t src_len;
+		
+		//Tokens and Errors
+		Token* tokens;
+		LexerError* errors;
+
+		//Index
+		size_t tokens_idx;
+		size_t src_idx;
+		size_t errors_idx;
+
+		//Position
+		size_t line;
+		size_t line_position;
+
+
+		bool is_at_end() { return src_idx <= src_len; }
+
+		void set_token(TokenType type) {
+			tokens[tokens_idx].setValue(nullptr);
+			tokens[tokens_idx].setType(type);
+			tokens[tokens_idx].setLine(line);
+			tokens[tokens_idx++].setLinePosition(line_position);
+		}
+
+		void set_token(TokenType type, const char* value) {
+			tokens[tokens_idx].setValue(value);
+			tokens[tokens_idx].setType(type);
+			tokens[tokens_idx].setLine(line);
+			tokens[tokens_idx++].setLinePosition(line_position);
+		}
+
+		inline bool match(const char val) {
+			return peek() == val;
+		}
+
+		inline bool peek_match(const char val) {
+			return peek(src_idx + 1) == val;
+		}
+
+		inline char peek() {
+			return src_idx <= src_len ? src[src_idx] : 0;
+		}
+
+		inline char peek(size_t pos) {
+			return pos <= src_len ? src[pos] : 0;
+		}
+
+		inline bool advance() {
+			if (match('\n')) {
+				line++;
+				line_position = 0;
+			} else {
+				line_position++;
+			}
+			src_idx++;
+			return src_idx <= src_len;
+		}
+
+		inline bool advance(size_t by) {
+			while (by > 0) {
+				if (!advance()) break;
+				by--;
+			}
+			return src_idx <= src_len;
+		}
+
+	};
+
+	static void set_char_literal(TokenInfo& info) {
+		info.advance();		//skip the '
+
+		char tmp[3];
+		size_t tmp_idx = 0;
+		if (getChar(info.peek())) {	//if it starts with "\" it is escaped
+			tmp[tmp_idx++] = info.peek();
+			info.advance();
+		}
+
+		tmp[tmp_idx++] = info.peek();
+
+		//check if char literal is ended with a second '
+		if (info.peek_match(INFINITY_SINGLE_QUOTATIONMARK)) {
+			info.advance();		//skip the second '
+		} else {
+			//TODO: ERROR
+		}
+
+		tmp[tmp_idx] = 0; //string end
+
+		info.set_token(CharacterLiteral, tmp);
+	}
+
+
+	static void set_single_character(TokenType type, TokenInfo& info) {
+		char tmp[2];
+		tmp[0] = info.peek();
+		tmp[1] = 0;
+		info.set_token(type, tmp);
+	}
+
+	static void set_double_character(TokenType type, TokenInfo& info) {
+		char tmp[3];
+		tmp[0] = info.peek();
+		info.advance();
+		tmp[1] = info.peek();
+		tmp[2] = 0;
+		info.set_token(type, tmp);
+	}
+
+	static void set_string_literal(TokenInfo& info) {
+		info.advance();
+
+		size_t begin_idx = info.src_idx;
+
+		while (!info.match(0) && !info.match('\n') && !info.match(INFINITY_QUOTATIONMARK)) {
+			info.advance();
+		}
+
+		size_t string_len = (info.src_idx - begin_idx);
+		char* string = new char[string_len + 1];
+
+		while (info.src_idx > begin_idx) {
+			size_t string_idx = string_len - (info.src_idx - begin_idx);
+			string[string_idx] = info.peek(begin_idx++);
+		}
+		string[string_len] = 0;
+
+		info.set_token(StringLiteral, string);
+		delete[] string;
+	}
 
 	Token::Token() {
 		m_val = nullptr;
@@ -27,264 +164,207 @@ namespace infinity {
 		delete[] m_val;
 	}
 	void Token::setValue(const char* val) {
-		m_val = new char[strlen(val) + 1];
-		strcpy(m_val, val);
-
+		if (val == nullptr) m_val = nullptr;
+		else {
+			m_val = new char[strlen(val) + 1];
+			strcpy(m_val, val);
+		}
 	}
 	void Token::setType(const TokenType& type) {
 		m_type = type;
 	}
+
+	void Token::setLine(const size_t& line) { m_line = line; }
+
+	void Token::setLinePosition(const size_t& line) { m_line = line; }
+
 	std::pair<LexerError*, Token*> Token::tokenize(const char* src, bool skipNewLine) {
 		auto begin = std::chrono::high_resolution_clock::now();
 
-		size_t srclen = strlen(src);
-		size_t idx = 0;
-		Token* tokens = new Token[srclen];
-		LexerError* errors = new LexerError[MAX_LEXER_ERROR_BEFORE_BREAK + 1];
-		size_t tokens_idx = 0;
-		size_t errors_idx = 0;
+		TokenInfo info{};
+		info.src = src;
+		info.src_len = strlen(src);
+		info.src_idx = 0;
+		info.tokens = new Token[info.src_len];
+		info.errors = new LexerError[MAX_LEXER_ERROR_BEFORE_BREAK + 1];
+		info.tokens_idx = 0;
+		info.errors_idx = 0;
 
-		size_t line_number = 1;
-		size_t line_pos = 1;
+		info.line = 1;
+		info.line_position = 1;
 
-
-		while (idx <= srclen) {
-			if (src[idx] == INFINITY_OPEN_PAREN) {
-				tokens[tokens_idx++].setType(TokenType::OpenParen);
-			} else if (src[idx] == INFINITY_CLOSE_PAREN) {
-				tokens[tokens_idx++].setType(TokenType::CloseParen);
-			} else if (src[idx] == INFINITY_OPEN_CURLY) {
-				tokens[tokens_idx++].setType(TokenType::OpenCurly);
-			} else if (src[idx] == INFINITY_CLOSE_CURLY) {
-				tokens[tokens_idx++].setType(TokenType::CloseCurly);
-			} else if (src[idx] == INFINITY_OPEN_BRACKET) {
-				tokens[tokens_idx++].setType(TokenType::OpenBracket);
-			} else if (src[idx] == INFINITY_CLOSE_BRACKET) {
-				tokens[tokens_idx++].setType(TokenType::CloseBracket);
-			} else if (src[idx] == INFINITY_PLUS || src[idx] == INFINITY_MINUS || src[idx] == INFINITY_MULTIPLY || (src[idx] == INFINITY_DIVIDE && src[idx+1] != INFINITY_DIVIDE)) {
-				char tmp[2];
-				tmp[0] = src[idx];
-				tmp[1] = 0;
-				tokens[tokens_idx].setValue(tmp);
-				tokens[tokens_idx++].setType(TokenType::BinaryOp);
-			} else if (src[idx] == INFINITY_EQUALS && src[idx + 1] != INFINITY_EQUALS) {
-				tokens[tokens_idx++].setType(TokenType::Equals);
-			} else if (src[idx] == INFINITY_COLON) {
-				tokens[tokens_idx++].setType(TokenType::Colon);
-			} else if (src[idx] == INFINITY_SEMICOLON) {
-				tokens[tokens_idx++].setType(TokenType::Semicolon);
-			} else if (src[idx] == 0) {
-				tokens[tokens_idx++].setType(TokenType::End);
-			} else if (src[idx] == INFINITY_NEWLINE) {
+		while (info.is_at_end()) {
+			if (info.match(INFINITY_OPEN_PAREN)) {
+				info.set_token(OpenParen);
+			} else if (info.match(INFINITY_CLOSE_PAREN)) {
+				info.set_token(CloseParen);
+			} else if (info.match(INFINITY_OPEN_CURLY)) {
+				info.set_token(OpenCurly);
+			} else if (info.match(INFINITY_CLOSE_CURLY)) {
+				info.set_token(CloseCurly);
+			} else if (info.match(INFINITY_OPEN_BRACKET)) {
+				info.set_token(OpenBracket);
+			} else if (info.match(INFINITY_CLOSE_BRACKET)) {
+				info.set_token(CloseBracket);
+			} else if (info.match(INFINITY_PLUS) && !info.peek_match(INFINITY_PLUS) || info.match(INFINITY_MINUS) && !info.peek_match(INFINITY_MINUS) || info.match(INFINITY_MULTIPLY) || (info.match(INFINITY_DIVIDE) && !info.peek_match(INFINITY_DIVIDE))) {
+				set_single_character(BinaryOp, info);
+			} else if (info.match(INFINITY_EQUALS) && !info.peek_match(INFINITY_EQUALS)) {
+				info.set_token(Equals);
+			} else if (info.match(INFINITY_COLON)) {
+				info.set_token(Colon);
+			} else if (info.match(INFINITY_SEMICOLON)) {
+				info.set_token(Semicolon);
+			} else if (info.match(0)) {
+				info.set_token(End);
+			} else if (info.match(INFINITY_NEWLINE)) {
 				if(!skipNewLine)
-					tokens[tokens_idx++].setType(TokenType::NewLine);
-				line_number++;
-				line_pos = 0;
-			} else if (src[idx] == INFINITY_AMPERSAND) {
-				tokens[tokens_idx++].setType(TokenType::Ampersand);
-			} else if (src[idx] == INFINITY_QUESTIONMARK) {
-				tokens[tokens_idx++].setType(TokenType::QuestionMark);
-			} else if (src[idx] == INFINITY_CALLSIGN && src[idx] != INFINITY_EQUALS) {
-				tokens[tokens_idx++].setType(TokenType::CallSign);
-			} else if (src[idx] == INFINITY_PERCENTSIGN) {
-				tokens[tokens_idx++].setType(TokenType::PercentSign);
-			} else if (src[idx] == INFINITY_COMMA) {
-				tokens[tokens_idx++].setType(TokenType::Comma);
-			} else if (src[idx] == INFINITY_DOT) {
-				tokens[tokens_idx++].setType(TokenType::Dot);
-			} else if (src[idx] == INFINITY_HASH) {
-				tokens[tokens_idx++].setType(TokenType::Hash);
-			} else if (src[idx] == INFINITY_TILDE) {
-				tokens[tokens_idx++].setType(TokenType::Tilde);
-			} else if (src[idx] == INFINITY_SINGLE_QUOTATIONMARK && (src[idx + 2] == INFINITY_SINGLE_QUOTATIONMARK || src[idx + 3] == INFINITY_SINGLE_QUOTATIONMARK)) {
-				idx++;
-				char tmp[5];
-				size_t tmp_idx = 0;
-				if (getChar(src[idx])) {	//if char is f.e. \n
-					tmp[tmp_idx++] = src[idx];
-					idx++;
-				}
-				tmp[tmp_idx++] = src[idx];
-				idx++;
-				tmp[tmp_idx] = 0;
-
-				tokens[tokens_idx].setValue(tmp);
-				tokens[tokens_idx++].setType(TokenType::CharacterLiteral);
-			} else if ((src[idx] == INFINITY_LESSTHAN && src[idx + 1] != INFINITY_EQUALS) || (src[idx] == INFINITY_GREATERTHAN && src[idx + 1] != INFINITY_EQUALS)) {
-				char tmp[2];
-				tmp[0] = src[idx];
-				tmp[1] = 0;
-				tokens[tokens_idx].setValue(tmp);
-				tokens[tokens_idx++].setType(TokenType::CompareOp);
+					info.set_token(NewLine);
+			} else if (info.match(INFINITY_AMPERSAND)) {
+				info.set_token(Ampersand);
+			} else if (info.match(INFINITY_QUESTIONMARK)) {
+				info.set_token(QuestionMark);
+			} else if (info.match(INFINITY_CALLSIGN) && !info.peek_match(INFINITY_EQUALS)) {
+				info.set_token(CallSign);
+			} else if (info.match(INFINITY_PERCENTSIGN)) {
+				info.set_token(PercentSign);
+			} else if (info.match(INFINITY_COMMA)) {
+				info.set_token(Comma);
+			} else if (info.match(INFINITY_DOT)) {
+				info.set_token(Dot);
+			} else if (info.match(INFINITY_HASH)) {
+				info.set_token(Hash);
+			} else if (info.match(INFINITY_TILDE)) {
+				info.set_token(Tilde);
+			} else if (info.match(INFINITY_SINGLE_QUOTATIONMARK)) {
+				set_char_literal(info);
+			} else if ((info.match(INFINITY_LESSTHAN) && !info.peek_match(INFINITY_EQUALS)) || (info.match(INFINITY_GREATERTHAN) && !info.peek_match(INFINITY_EQUALS))) {
+				set_single_character(CompareOp, info);
 			} else {
 
 				//MULTI CHARACTER 
-				if ((src[idx] == INFINITY_EQUALS && src[idx + 1] == INFINITY_EQUALS) || (src[idx] == INFINITY_LESSTHAN && src[idx + 1] == INFINITY_EQUALS) || (src[idx] == INFINITY_GREATERTHAN && src[idx + 1] == INFINITY_EQUALS)) {
-					char tmp[3];
-					tmp[0] = src[idx++];
-					tmp[1] = src[idx];
-					tmp[2] = 0;
-					tokens[tokens_idx].setValue(tmp);
-					tokens[tokens_idx++].setType(TokenType::CompareOp);
-				} else if (src[idx] == INFINITY_QUOTATIONMARK) {
-					idx += 1;
-					size_t begin_idx = idx;
-					while (src[idx] != 0 && src[idx] != INFINITY_QUOTATIONMARK) {
-						idx++;
+				if ((info.match(INFINITY_EQUALS) && info.peek_match(INFINITY_EQUALS)) || 
+					(info.match(INFINITY_LESSTHAN) && info.peek_match(INFINITY_EQUALS)) || 
+					(info.match(INFINITY_GREATERTHAN) && info.peek_match(INFINITY_EQUALS))) {
+					set_double_character(CompareOp, info);
+				} else if (info.match(INFINITY_QUOTATIONMARK)) {
+					set_string_literal(info);
+				} else if (info.match(INFINITY_DIVIDE) && info.peek_match(INFINITY_DIVIDE)) {
+					size_t begin_idx = info.src_idx;
+					while (!info.peek_match(0) && !info.peek_match('\n')) info.advance();
+				} else if (isAlphabetical(info.peek()) || info.match('_')) {
+					size_t begin_idx = info.src_idx;
+					while (isAlphabetical(info.peek(info.src_idx + 1)) || isNumerical(info.peek(info.src_idx + 1)) || info.peek_match('_')) {
+						info.advance();
 					}
 
-					size_t stringlen = (idx - begin_idx);
-					char* string = new char[stringlen + 1];
-
-					while (idx > begin_idx) {
-						size_t string_idx = stringlen - (idx - begin_idx);
-						string[string_idx] = src[begin_idx++];
-					}
-					string[stringlen] = 0;
-
-					tokens[tokens_idx].setValue(string);
-					tokens[tokens_idx++].setType(TokenType::StringLiteral);
-					delete[] string;
-				} else if (src[idx] == INFINITY_DIVIDE && src[idx + 1] == INFINITY_DIVIDE) {
-					idx += 2;
-					size_t begin_idx = idx;
-					while (src[idx] != 0 && src[idx] != '\n') {
-						idx++;
-					}
-					idx--;
-				} else if (isAlphabetical(src[idx]) || src[idx] == '_') {
-					size_t begin_idx = idx;
-					while (isAlphabetical(src[idx]) || isNumerical(src[idx]) || src[idx] == '_') {
-						idx++;
-						line_pos++;
-					}
-					size_t wordlen = (idx - begin_idx);
+					size_t wordlen = ((info.src_idx+1) - begin_idx);
 					char* tmp = new char[wordlen + 1];
-					while (idx > begin_idx) {
-						size_t tmp_idx = wordlen - (idx - begin_idx);
+					while (info.src_idx > begin_idx) {
+						size_t tmp_idx = wordlen - (info.src_idx + 1 - begin_idx);
 						tmp[tmp_idx] = src[begin_idx++];
 					}
 					tmp[wordlen] = 0;
-					idx--;
 
 					//KEYWORDS
 					if (!strcmp(tmp, INFINITY_LET)) {
-						tokens[tokens_idx++].setType(TokenType::Let);
+						info.set_token(Let);
 					} else if (!strcmp(tmp, INFINITY_FOR)) {
-						tokens[tokens_idx++].setType(TokenType::For);
+						info.set_token(For);
 					} else if (!strcmp(tmp, INFINITY_WHILE)) {
-						tokens[tokens_idx++].setType(TokenType::While);
+						info.set_token(While);
 					} else if (!strcmp(tmp, INFINITY_DO)) {
-						tokens[tokens_idx++].setType(TokenType::Do);
+						info.set_token(Do);
 					} else if (!strcmp(tmp, INFINITY_BREAK)) {
-						tokens[tokens_idx++].setType(TokenType::Break);
+						info.set_token(Break);
 					} else if (!strcmp(tmp, INFINITY_CONTINUE)) {
-						tokens[tokens_idx++].setType(TokenType::Continue);
+						info.set_token(Continue);
 					} else if (!strcmp(tmp, INFINITY_IF)) {
-						tokens[tokens_idx++].setType(TokenType::If);
+						info.set_token(If);
 					} else if (!strcmp(tmp, INFINITY_VOID)) {
-						tokens[tokens_idx++].setType(TokenType::Void);
+						info.set_token(Void);
 					} else if (!strcmp(tmp, INFINITY_NULL)) {
-						tokens[tokens_idx++].setType(TokenType::Null);
+						info.set_token(Null);
 					} else if (!strcmp(tmp, INFINITY_CLASS)) {
-						tokens[tokens_idx++].setType(TokenType::Class);
+						info.set_token(Class);
 					} else if (!strcmp(tmp, INFINITY_STRUCT)) {
-						tokens[tokens_idx++].setType(TokenType::Struct);
+						info.set_token(Struct);
 					} else if (!strcmp(tmp, INFINITY_PUBLIC)) {
-						tokens[tokens_idx++].setType(TokenType::Public);
+						info.set_token(Public);
 					} else if (!strcmp(tmp, INFINITY_PROTECTED)) {
-						tokens[tokens_idx++].setType(TokenType::Protected);
+						info.set_token(Protected);
 					} else if (!strcmp(tmp, INFINITY_PRIVATE)) {
-						tokens[tokens_idx++].setType(TokenType::Private);
+						info.set_token(Private);
 					} else if (!strcmp(tmp, INFINITY_INT)) {
-						tokens[tokens_idx++].setType(TokenType::Int);
+						info.set_token(Int);
 					} else if (!strcmp(tmp, INFINITY_FLOAT)) {
-						tokens[tokens_idx++].setType(TokenType::Float);
+						info.set_token(Float);
 					} else if (!strcmp(tmp, INFINITY_STRING)) {
-						tokens[tokens_idx++].setType(TokenType::String);
+						info.set_token(String);
 					} else if (!strcmp(tmp, INFINITY_CHAR)) {
-						tokens[tokens_idx++].setType(TokenType::Char);
+						info.set_token(Char);
 					} else if (!strcmp(tmp, INFINITY_BOOL)) {
-						tokens[tokens_idx++].setType(TokenType::Bool);
+						info.set_token(Bool);
 					} else if (!strcmp(tmp, INFINITY_TABLE)) {
-						tokens[tokens_idx++].setType(TokenType::Table);
+						info.set_token(Table);
 					} else if (!strcmp(tmp, INFINITY_SWITCH)) {
-						tokens[tokens_idx++].setType(TokenType::Switch);
+						info.set_token(Switch);
 					} else if (!strcmp(tmp, INFINITY_CASE)) {
-						tokens[tokens_idx++].setType(TokenType::Case);
-					} else if (!strcmp(tmp, INFINITY_TRUE)) {
-						tokens[tokens_idx++].setType(TokenType::Case);
-					} else if (!strcmp(tmp, INFINITY_FALSE)) {
-						tokens[tokens_idx++].setType(TokenType::Case);
+						info.set_token(Case);
 					} else if (!strcmp(tmp, INFINITY_SUPER)) {
-						tokens[tokens_idx++].setType(TokenType::Super);
+						info.set_token(Super);
 					} else if (!strcmp(tmp, INFINITY_THIS)) {
-						tokens[tokens_idx++].setType(TokenType::This);
+						info.set_token(This);
 					} else {
 						//IDENTIFIER
-						tokens[tokens_idx].setValue(tmp);
-						tokens[tokens_idx++].setType(TokenType::Identifier);
+						info.set_token(Identifier, tmp);
 					}
 
 					delete[] tmp;
-				} else if (isNumerical(src[idx])) {
-					size_t begin_idx = idx;
-					while (isNumerical(src[idx])) {
-						idx++;
-						line_pos++;
+				} else if (isNumerical(info.peek())) {
+					size_t begin_idx = info.src_idx;
+					while (isNumerical(info.peek(info.src_idx + 1))) {
+						info.advance();
 					}
 
-					if (src[idx] == '.') {
-						idx++;
-						line_pos++;
-
-						while (isNumerical(src[idx])) {
-							idx++;
-							line_pos++;
-						}
-
+					if (info.peek_match('.')) {
+						info.advance();
+						while (isNumerical(info.peek(info.src_idx + 1))) 
+							info.advance();
 					}
 
-					size_t wordlen = (idx - begin_idx);
+					size_t wordlen = (info.src_idx - begin_idx);
 					char* tmp = new char[wordlen + 1];
-					while (idx > begin_idx) {
-						size_t tmp_idx = wordlen - (idx - begin_idx);
+					while (info.src_idx > begin_idx) {
+						size_t tmp_idx = wordlen - (info.src_idx - begin_idx);
 						tmp[tmp_idx] = src[begin_idx++];
 					}
 					tmp[wordlen] = 0;
-					idx--;
 
-					//IDENTIFIER
-					tokens[tokens_idx].setValue(tmp);
-					tokens[tokens_idx++].setType(TokenType::NumberLiteral);
-
+					//number
+					info.set_token(NumberLiteral, tmp);
 
 					delete[] tmp;
-				} else if (isSkippable(src[idx])) {
-					//NOTHING TODO FOR NOW
+				} else if (isSkippable(info.peek())) {
+					while (isSkippable(info.peek(info.src_idx + 1))) info.advance();
 				} else {
-					errors[errors_idx].m_critical = true;
-					std::string tmp = std::format("Unknown Token {} at {}:{}", src[idx], line_number, line_pos - 1);
-					errors[errors_idx++].m_msg = tmp;
-
+					info.errors[info.errors_idx].m_critical = true;
+					std::string tmp = std::format("Unknown Token {} at {}:{}", info.peek(), info.line, info.line_position - 1);
+					info.errors[info.errors_idx++].m_msg = tmp;
 				}
 			}
-
-			idx++;
-			line_pos++;
+			info.advance();
 		}
-		tokens[tokens_idx++].setType(TokenType::OpenParen);
-
+		
 		auto end = std::chrono::high_resolution_clock::now();
 
-		if (errors[0].m_msg.empty()) {
-			INFINITY_CORE_INFO(POST_TOKENIZE_LOG_TEMPLATE_SUCCESS, srclen, tokens_idx, std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), 0);
+		if (info.errors_idx == 0) {
+			INFINITY_CORE_INFO(POST_TOKENIZE_LOG_TEMPLATE_SUCCESS, info.src_len, info.tokens_idx, std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), 0);
 		} else {
-			INFINITY_CORE_WARN(POST_TOKENIZE_LOG_TEMPLATE_ERROR, srclen, tokens_idx, std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), errors_idx);
+			INFINITY_CORE_WARN(POST_TOKENIZE_LOG_TEMPLATE_ERROR, info.src_len, info.tokens_idx, std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), info.errors_idx);
 		}
 
 
-		return std::pair<LexerError*, Token*>(errors, tokens);
+		return std::pair<LexerError*, Token*>(info.errors, info.tokens);
 	}
 	std::string Token::toString() {
 
